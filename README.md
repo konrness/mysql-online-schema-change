@@ -31,3 +31,8 @@ Call directly, eg.
 
     // add -v or -vv for additional output
     ./online-schema-change database table "alter table statement" --user jsmith --password pw0rd
+
+
+This tool uses a modified version of the facebook OSC script http://bazaar.launchpad.net/~mysqlatfacebook/mysqlatfacebook/tools/annotate/head:/osc/OnlineSchemaChange.php
+
+It has been updated to use PDO and a PSR logger, and wrapped in a console command tool.
