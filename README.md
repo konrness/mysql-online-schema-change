@@ -29,5 +29,5 @@ Download the phar archive directly
 
 Call directly, eg.
 
-    // add -v, -vv
+    // add -v or -vv for additional output
     ./online-schema-change database table "alter table statement" --user jsmith --password pw0rd
