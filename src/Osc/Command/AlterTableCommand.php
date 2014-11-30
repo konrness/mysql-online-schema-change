@@ -68,7 +68,7 @@ class AlterTableCommand extends Command
     {
         $verbosity = array(
             OutputInterface::VERBOSITY_NORMAL       => \Psr\Log\LogLevel::NOTICE,
-            OutputInterface::VERBOSITY_VERY_VERBOSE => \Psr\Log\LogLevel::INFO,
+            OutputInterface::VERBOSITY_VERY_VERBOSE => \Psr\Log\LogLevel::DEBUG,
             OutputInterface::VERBOSITY_VERBOSE      => \Psr\Log\LogLevel::INFO,
             OutputInterface::VERBOSITY_DEBUG        => \Psr\Log\LogLevel::DEBUG,
             OutputInterface::VERBOSITY_QUIET        => \Psr\Log\LogLevel::EMERGENCY,
