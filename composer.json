@@ -1,0 +1,12 @@
+{
+    "autoload" : {
+        "files" : ["lib/Facebook/Osc/OnlineSchemaChangeRefactor.php"],
+        "psr-4" : {
+            "Osc\\" : "src/Osc"
+        }
+    },
+    "require" : {
+        "symfony/console" : "*",
+        "psr/log" : "*"
+    }
+}
