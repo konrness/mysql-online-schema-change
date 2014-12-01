@@ -4,7 +4,7 @@ $packageAutoloader = __DIR__ . '/../../vendor/autoload.php';
 
 require_once $packageAutoloader;
 
-$logger = new \Osc\Logger(STDOUT, \Psr\Log\LogLevel::DEBUG);
+$logger = new \Osc\Logger(STDOUT, \Psr\Log\LogLevel::INFO);
 
 $socket = "host=localhost";
 
@@ -15,9 +15,12 @@ $pdo = new \PDO("mysql:$socket;", 'root', 'password', array(
 $database = 'osctest';
 $table = 'osctest_table';
 
+// Cleanup table from last run
+$pdo->query("DROP TABLE IF EXISTS $database.__osc_old_$table");
+
 setUpTable($pdo, $database, $table);
 
-populateTable($pdo, $database, $table);
+populateTable($pdo, $database, $table, 50000);
 
 $onlineSchemaChange = new \OnlineSchemaChangeRefactor(
     $pdo,
@@ -26,7 +29,8 @@ $onlineSchemaChange = new \OnlineSchemaChangeRefactor(
     $table,
     "ADD COLUMN newcol int(8) DEFAULT 1 NOT NULL",
     null,
-    OSC_FLAGS_ACCEPT_VERSION
+    OSC_FLAGS_ACCEPT_VERSION,
+    5000
 );
 
 $onlineSchemaChange->forceCleanup();
@@ -49,7 +53,7 @@ function setUpTable(\PDO $pdo, $database, $table)
 }
 
 
-function populateTable(\PDO $pdo, $database, $table)
+function populateTable(\PDO $pdo, $database, $table, $rows)
 {
     $query = "INSERT INTO $database.$table (test, date_time) VALUES";
 
@@ -67,7 +71,7 @@ function populateTable(\PDO $pdo, $database, $table)
     };
 
 
-    for($i = 0; $i <= 500000; $i++){
+    for($i = 0; $i <= $rows; $i++){
 
         $int = rand(1262055681,1262055681);
 

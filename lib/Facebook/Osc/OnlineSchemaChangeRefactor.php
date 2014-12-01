@@ -544,25 +544,19 @@ class OnlineSchemaChangeRefactor
     }
 
     // wrapper around unlink
-    protected function executeUnlink($file, $check_if_exists = false)
+    protected function executeUnlink($file, $ignoreError = false)
     {
-        $this->logger->info("--Deleting file:" . $file . "\n");
-
-        if (($check_if_exists || ($this->flags & OSC_FLAGS_FORCE_CLEANUP)) &&
-            !file_exists($file)
-        ) {
-            return true;
-        }
+        $this->logger->info("Deleting file:" . $file);
 
         if (!file_exists($file)) {
-            $this->logger->warning("File " . $file . " does not exist\n");
+            $this->logger->warning("File " . $file . " does not exist");
             return false;
         }
 
         if (!unlink($file)) {
-            if ($this->flags & OSC_FLAGS_FORCE_CLEANUP) {
+            if ($ignoreError) {
                 // log and move on
-                $this->logger->warning("Could not delete file:" . $file . "\n");
+                $this->logger->warning("Could not delete file:" . $file);
                 return false;
             } else {
                 throw new RuntimeException('Could not delete file:' . $file, false);
@@ -576,7 +570,7 @@ class OnlineSchemaChangeRefactor
     // logflags is used to specify:
     // whether to log always (default) or only in verbose mode (LOGFLAG_VERBOSE)
     // whether failure is error (default) or warning (LOGFLAG_WARNING)
-    protected function executeSql($sql_description, $sql)
+    protected function executeSql($sql_description, $sql, $ignoreErrors = false)
     {
         $this->logger->info($sql_description);
 
@@ -589,7 +583,7 @@ class OnlineSchemaChangeRefactor
         {
             $this->logger->error("ERROR: SQL : " . $sql . ". Error : " . $e->getMessage());
 
-            if (($this->flags & OSC_FLAGS_FORCE_CLEANUP)) {
+            if ($ignoreErrors) {
                 // log error and move on
                 $this->logger->notice("Force cleanup enabled, catching exception");
                 return false;
@@ -1239,6 +1233,7 @@ class OnlineSchemaChangeRefactor
             $fileString = sprintf('%s.%s', $this->outfileTable, $outfile_suffix);
 
             $stmt = $this->executeSql('Selecting table into outfile: ' . $fileString, $selectinto);
+
             $this->outfileSuffixStart = 1;
             $this->outfileSuffixEnd = $outfile_suffix;
             $rowCount = $stmt->rowCount();
@@ -1252,6 +1247,8 @@ class OnlineSchemaChangeRefactor
 
             $this->calculateRuntimeStats($outfile_suffix, $runs, $startTime);
 
+
+
         } while ($rowCount >= $this->batchsizeLoad);
 
         $this->executeSql('Committing after generating outfiles', 'COMMIT');
@@ -1259,7 +1256,7 @@ class OnlineSchemaChangeRefactor
 
     private function calculateRuntimeStats($currentRun, $totalRuns, $startTime)
     {
-        $percent = ($currentRun / $totalRuns) * 100;
+        $percent = round(($currentRun / $totalRuns) * 100, 1);
 
         $averageSecondsPerRun = (time() - $startTime) / $currentRun;
 
@@ -1274,9 +1271,11 @@ class OnlineSchemaChangeRefactor
 
     private function formatSeconds($seconds)
     {
+        $seconds = round($seconds);
+
         $dtStart = new DateTime("@0");
         $dtSeconds = new DateTime("@$seconds");
-        return $dtStart->diff($dtSeconds)->format('%a days, %h hours, %i minutes and %s seconds');
+        return $dtStart->diff($dtSeconds)->format('%a days, %h hrs, %i mins and %s secs');
     }
 
     // gets @@datadir into $this->dataDir and returns it as well
@@ -1424,7 +1423,14 @@ class OnlineSchemaChangeRefactor
     // loads copy table from outfile
     protected function loadCopyTable()
     {
+        $totalFiles = $this->outfileSuffixEnd - $this->outfileSuffixStart;
+
+        $file = 0;
+
+        $startTime = time();
+
         while ($this->outfileSuffixEnd >= $this->outfileSuffixStart) {
+            $file++;
             if ($this->flags & OSC_FLAGS_USE_NEW_PK) {
                 $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s(%s)",
                     $this->outfileTable,
@@ -1440,8 +1446,8 @@ class OnlineSchemaChangeRefactor
                     $this->newtablename,
                     $this->pkcolumns, $this->nonpkcolumns);
             }
-            // the LOAD might fail if duplicate keys were added in a new PK
-            $this->executeSql('Loading copy table', $loadsql);
+
+            $this->executeSql('Loading file into copy', $loadsql);
 
             // delete file now rather than waiting till cleanup
             // as this will free up space.
@@ -1450,6 +1456,8 @@ class OnlineSchemaChangeRefactor
             if (!($this->flags & OSC_FLAGS_NOCLEANUP)) {
                 $this->executeUnlink($filename);
             }
+
+            $this->calculateRuntimeStats($file, $totalFiles, $startTime);
         }
         unset($this->outfileSuffixEnd);
         unset($this->outfileSuffixStart);
@@ -1695,13 +1703,11 @@ class OnlineSchemaChangeRefactor
         return $result->rowCount() === 1;
     }
 
-    protected function cleanup()
+    protected function cleanup($force = false)
     {
         if ($this->flags & OSC_FLAGS_NOCLEANUP) {
             return;
         }
-
-        $force = $this->flags & OSC_FLAGS_FORCE_CLEANUP;
 
         $this->executeSql('Unlock tables just in case', 'unlock tables');
 
@@ -1717,19 +1723,19 @@ class OnlineSchemaChangeRefactor
         }
         if (isset($this->cleanupInsertTrigger)) {
             $drop = sprintf('drop trigger %s.%s', $this->qdbnameq, $this->insertTrigger);
-            $this->executeSql('Dropping insert trigger', $drop);
+            $this->executeSql('Dropping insert trigger', $drop, $force);
             unset($this->cleanupInsertTrigger);
         }
 
         if (isset($this->cleanupDeleteTrigger)) {
             $drop = sprintf('drop trigger %s.%s', $this->qdbnameq, $this->deleteTrigger);
-            $this->executeSql('Dropping delete trigger', $drop);
+            $this->executeSql('Dropping delete trigger', $drop, $force);
             unset($this->cleanupDeleteTrigger);
         }
 
         if (isset($this->cleanupUpdateTrigger)) {
             $drop = sprintf('drop trigger %s.%s', $this->qdbnameq, $this->updateTrigger);
-            $this->executeSql('Dropping update trigger', $drop);
+            $this->executeSql('Dropping update trigger', $drop, $force);
             unset($this->cleanupUpdateTrigger);
         }
 
@@ -1747,7 +1753,7 @@ class OnlineSchemaChangeRefactor
         }
 
         if (isset($this->cleanupDeltastable)) {
-            $this->executeSql('Dropping deltas table', 'drop table ' . $this->deltastable);
+            $this->executeSql('Dropping deltas table', 'drop table ' . $this->deltastable, $force);
             unset($this->cleanupDeltastable);
         }
 
@@ -1763,7 +1769,7 @@ class OnlineSchemaChangeRefactor
             $rename = sprintf('alter table %s rename %s',
                 $this->renametable, $this->qtablenameq);
             $this->executeSql('Renaming backup table as original table',
-                $rename);
+                $rename, $force);
             unset($this->cleanupRenametable);
         } else if (!$orig_table_exists) {
             // PANIC
@@ -1785,14 +1791,14 @@ class OnlineSchemaChangeRefactor
 
         if (isset($this->cleanupOutfile)) {
             $outfile = $this->cleanupOutfile;
-            $this->executeUnlink($outfile);
+            $this->executeUnlink($outfile, $force);
             unset($this->cleanupOutfile);
         } else if ($force) {
             if (isset($this->outfileIncludeIDs)) {
-                $this->executeUnlink($this->outfileIncludeIDs);
+                $this->executeUnlink($this->outfileIncludeIDs, $force);
             }
             if (isset($this->outfileExcludeIDs)) {
-                $this->executeUnlink($this->outfileExcludeIDs);
+                $this->executeUnlink($this->outfileExcludeIDs, $force);
             }
         }
 
@@ -1800,7 +1806,7 @@ class OnlineSchemaChangeRefactor
             while ($this->outfileSuffixEnd >= $this->outfileSuffixStart) {
                 $filename = sprintf('%s.%d', $this->outfileTable,
                     $this->outfileSuffixStart);
-                $this->executeUnlink($filename);
+                $this->executeUnlink($filename, $force);
                 $this->outfileSuffixStart++;
             }
             unset($this->outfileSuffixEnd);
@@ -1809,7 +1815,7 @@ class OnlineSchemaChangeRefactor
             $files_wildcard = sprintf('%s.*', $this->outfileTable);
             $files = glob($files_wildcard);
             foreach ($files as $file) {
-                $this->executeUnlink($file);
+                $this->executeUnlink($file, $force);
             }
         }
 
@@ -1819,8 +1825,10 @@ class OnlineSchemaChangeRefactor
 
     public function forceCleanup()
     {
-        $this->flags |= OSC_FLAGS_FORCE_CLEANUP;
-        return $this->execute();
+        $this->logger->notice("Running cleanup...");
+        $this->cleanup(true);
+        $this->logger->notice("Cleaned. Exiting.");
+        return true;
     }
 
     public function execute()
@@ -1831,19 +1839,11 @@ class OnlineSchemaChangeRefactor
             // outfile names for storing copy of table, and processed IDs
             $this->initOutfileNames();
 
-            if ($this->flags & OSC_FLAGS_FORCE_CLEANUP) {
-                $this->logger->notice("Running cleanup...");
-                $this->cleanup();
-                $this->logger->notice("Cleaned. Exiting.");
-                return true;
-            } else {
-
-                if ($this->doesTableExist($this->renametable)) {
-                    throw new RuntimeException("Please cleanup table $this->renametable left over from prior run.");
-                }
-
-                $this->checkLongXact();
+            if ($this->doesTableExist($this->renametable)) {
+                throw new RuntimeException("Please cleanup table $this->renametable left over from prior run.");
             }
+
+            $this->checkLongXact();
 
             $this->createCopyTable();
             $this->logger->notice("Copy of $this->tablename created at $this->newtablename.");
