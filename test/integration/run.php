@@ -15,9 +15,6 @@ $pdo = new \PDO("mysql:$socket;", 'root', 'password', array(
 $database = 'osctest';
 $table = 'osctest_table';
 
-// Cleanup table from last run
-$pdo->query("DROP TABLE IF EXISTS $database.__osc_old_$table");
-
 setUpTable($pdo, $database, $table);
 
 populateTable($pdo, $database, $table, 50000);
@@ -29,11 +26,14 @@ $onlineSchemaChange = new \OnlineSchemaChangeRefactor(
     $table,
     "ADD COLUMN newcol int(8) DEFAULT 1 NOT NULL",
     null,
-    OSC_FLAGS_ACCEPT_VERSION,
+    OSC_FLAGS_ACCEPT_VERSION | OSC_FLAGS_DROPTABLE,
     5000
 );
 
-$onlineSchemaChange->forceCleanup();
+if(!empty($argv[1]))
+{
+    $onlineSchemaChange->forceCleanup();
+}
 
 $onlineSchemaChange->execute();
 

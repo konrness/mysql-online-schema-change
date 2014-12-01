@@ -99,8 +99,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // drops renamed original table
 define('OSC_FLAGS_DROPTABLE', 0x00000001);
-// See above.
-define('OSC_FLAGS_FORCE_CLEANUP', 0x00000004);
 // don't do cleanup (helps testing)
 define('OSC_FLAGS_NOCLEANUP', 0x00000008);
 // see note above on this flag
@@ -285,7 +283,7 @@ class OnlineSchemaChangeRefactor
             $db = $db_and_table['db'];
             $table = $db_and_table['table'];
             $ddl = ''; // empty alter table command as we don't intend to alter
-            $osc = new self($pdo, $logger, $db, $table, $ddl, null, OSC_FLAGS_FORCE_CLEANUP | $flags);
+            $osc = new self($pdo, $logger, $db, $table, $ddl, null);
 
             $osc->forceCleanup();
         }
@@ -546,10 +544,8 @@ class OnlineSchemaChangeRefactor
     // wrapper around unlink
     protected function executeUnlink($file, $ignoreError = false)
     {
-        $this->logger->info("Deleting file:" . $file);
-
         if (!file_exists($file)) {
-            $this->logger->warning("File " . $file . " does not exist");
+            $this->logger->debug("File " . $file . " does not exist");
             return false;
         }
 
@@ -562,6 +558,9 @@ class OnlineSchemaChangeRefactor
                 throw new RuntimeException('Could not delete file:' . $file, false);
             }
         }
+
+        $this->logger->info("Deleted file:" . $file);
+
         return true;
     }
 
@@ -821,6 +820,9 @@ class OnlineSchemaChangeRefactor
                 "unless OSC_FLAGS_ACCEPT_VERSION flag is set.";
             throw new RuntimeException($error);
         }
+
+        $this->logger->notice("MySQL version: $this->version");
+
         return $this->version;
     }
 
@@ -872,7 +874,7 @@ class OnlineSchemaChangeRefactor
     protected function createDeltasTable()
     {
         // deltas has an IDCOLNAME, DMLCOLNAME, and all columns as original table
-        $createtable = 'create table %s' .
+        $createtable = 'create table if not exists %s' .
             '(%s INT AUTO_INCREMENT, %s INT, primary key(%s)) ' .
             'ENGINE=InnoDB ' .
             'as (select %s from %s LIMIT 0)';
@@ -1212,6 +1214,8 @@ class OnlineSchemaChangeRefactor
 
         $startTime = time();
 
+        $this->outfileSuffixStart = 1;
+
         do {
 
             $outfile_suffix++; // start with 1
@@ -1225,29 +1229,42 @@ class OnlineSchemaChangeRefactor
             $assign = $this->assignRangeEndVariables($this->pkcolumnarray,
                 $this->rangeEndVarsArray);
 
-            $selectinto = sprintf($selectinto, $assign, $this->nonpkcolumns,
-                $this->qtablenameq, $whereclause,
-                $this->pkcolumns, $this->batchsizeLoad,
-                $this->outfileTable, $outfile_suffix);
+            $selectinto = sprintf($selectinto,
+                $assign, $this->nonpkcolumns, $this->qtablenameq, $whereclause,
+                $this->pkcolumns, $this->batchsizeLoad, $this->outfileTable, $outfile_suffix);
 
-            $fileString = sprintf('%s.%s', $this->outfileTable, $outfile_suffix);
+            $fileString = sprintf('%s.%d', $this->outfileTable, $outfile_suffix);
 
-            $stmt = $this->executeSql('Selecting table into outfile: ' . $fileString, $selectinto);
-
-            $this->outfileSuffixStart = 1;
             $this->outfileSuffixEnd = $outfile_suffix;
-            $rowCount = $stmt->rowCount();
 
             $this->refreshRangeStart();
-            $range = $this->getRangeStartCondition($this->pkcolumnarray,
-                $this->rangeStartVarsArray);
+            $range = $this->getRangeStartCondition($this->pkcolumnarray, $this->rangeStartVarsArray);
             $whereclause = sprintf(" WHERE %s ", $range);
+
+            if(is_file($fileString) || is_file($fileString . '.loaded'))
+            {
+                $this->logger->warning("File $fileString already exists from previous run. Skipping...");
+
+                $rowCount = $this->batchsizeLoad;
+            }
+            else
+            {
+                try{
+                    $stmt = $this->executeSql('Selecting table into outfile: ' . $fileString, $selectinto);
+                }
+                catch(\Exception $e)
+                {
+                    $this->executeUnlink($fileString);
+
+                    throw $e;
+                }
+
+                $rowCount = $stmt->rowCount();
+            }
 
             $this->logger->notice("Written $rowCount rows to $fileString");
 
             $this->calculateRuntimeStats($outfile_suffix, $runs, $startTime);
-
-
 
         } while ($rowCount >= $this->batchsizeLoad);
 
@@ -1310,8 +1327,15 @@ class OnlineSchemaChangeRefactor
 
     protected function createCopyTable()
     {
-        $this->executeSql('Creating copy table', "CREATE TABLE $this->newtablename LIKE $this->tablename");
-        $this->executeSql('Altering copy table', "ALTER TABLE $this->newtablename $this->altercmd");
+        if(!$this->doesTableExist($this->newtablename))
+        {
+            $this->executeSql('Creating copy table', "CREATE TABLE $this->newtablename LIKE $this->tablename");
+            $this->executeSql('Altering copy table', "ALTER TABLE $this->newtablename $this->altercmd");
+        }
+        else
+        {
+            $this->logger->warning("Table $this->newtablename already exists from previous run.");
+        }
     }
 
     // validates any assumptions about PK after the alter
@@ -1425,42 +1449,56 @@ class OnlineSchemaChangeRefactor
     {
         $totalFiles = $this->outfileSuffixEnd - $this->outfileSuffixStart;
 
+        $suffixStart = $this->outfileSuffixStart;
+
         $file = 0;
 
         $startTime = time();
 
-        while ($this->outfileSuffixEnd >= $this->outfileSuffixStart) {
+        while ($this->outfileSuffixEnd >= $suffixStart) {
+
             $file++;
+
+            $filename = sprintf('%s.%d', $this->outfileTable, $suffixStart);
+
             if ($this->flags & OSC_FLAGS_USE_NEW_PK) {
                 $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s(%s)",
                     $this->outfileTable,
-                    $this->outfileSuffixStart,
+                    $suffixStart,
                     $this->ignoredups,
                     $this->newtablename,
                     $this->columns);
             } else {
                 $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s(%s, %s)",
                     $this->outfileTable,
-                    $this->outfileSuffixStart,
+                    $suffixStart,
                     $this->ignoredups,
                     $this->newtablename,
                     $this->pkcolumns, $this->nonpkcolumns);
+            }
+
+            $suffixStart++;
+
+            if(is_file($filename . '.loaded'))
+            {
+                $this->logger->warning("File $filename has already been loaded in previous run. Skipping...");
+                continue;
             }
 
             $this->executeSql('Loading file into copy', $loadsql);
 
             // delete file now rather than waiting till cleanup
             // as this will free up space.
-            $filename = sprintf('%s.%d', $this->outfileTable, $this->outfileSuffixStart);
-            $this->outfileSuffixStart++;
+
+            // Create a .loaded file so we don't need to reload this file if the process stops
+            touch($filename . '.loaded');
+
             if (!($this->flags & OSC_FLAGS_NOCLEANUP)) {
                 $this->executeUnlink($filename);
             }
 
             $this->calculateRuntimeStats($file, $totalFiles, $startTime);
         }
-        unset($this->outfileSuffixEnd);
-        unset($this->outfileSuffixStart);
     }
 
     // Generates condition of the form
@@ -1634,6 +1672,23 @@ class OnlineSchemaChangeRefactor
         $this->logger->info($output);
     }
 
+    protected function rowCounts()
+    {
+        $query1 = sprintf("SELECT count(*) FROM %s", $this->newtablename);
+        $query2 = sprintf("SELECT count(*) FROM %s", $this->qtablenameq);
+
+        $count1 = $this->executeSql('Checking old table row count', $query1)->fetchColumn();
+        $count2 = $this->executeSql('Checking new table row count', $query2)->fetchColumn();
+
+        if ($count1 !== $count2)
+        {
+            throw new RuntimeException("Row counts don't match. $count1 => $count2");
+        }
+
+        $this->logger->notice("Row counts verified: $count1");
+
+    }
+
     protected function checksum()
     {
         $query = sprintf("checksum table %s, %s", $this->newtablename, $this->qtablenameq);
@@ -1666,6 +1721,8 @@ class OnlineSchemaChangeRefactor
         // any changes that happened after we replayed changes last time.
         // true means do them in one transaction.
         $this->replayChanges(true);
+
+        $this->rowCounts();
 
         // at this point tables should be identical if schema is same
         if ($this->flags & OSC_FLAGS_CHECKSUM) {
@@ -1807,11 +1864,12 @@ class OnlineSchemaChangeRefactor
                 $filename = sprintf('%s.%d', $this->outfileTable,
                     $this->outfileSuffixStart);
                 $this->executeUnlink($filename, $force);
+                $this->executeUnlink($filename . '.loaded', $force);
                 $this->outfileSuffixStart++;
             }
             unset($this->outfileSuffixEnd);
             unset($this->outfileSuffixStart);
-        } else if ($force && isset($this->outfileTable)) {
+        } else if (isset($this->outfileTable)) {
             $files_wildcard = sprintf('%s.*', $this->outfileTable);
             $files = glob($files_wildcard);
             foreach ($files as $file) {
@@ -1825,6 +1883,10 @@ class OnlineSchemaChangeRefactor
 
     public function forceCleanup()
     {
+        $this->validateVersion();
+        // outfile names for storing copy of table, and processed IDs
+        $this->initOutfileNames();
+
         $this->logger->notice("Running cleanup...");
         $this->cleanup(true);
         $this->logger->notice("Cleaned. Exiting.");
@@ -1835,7 +1897,7 @@ class OnlineSchemaChangeRefactor
     {
         try {
             $this->validateVersion();
-            $this->logger->notice("MySQL version: $this->version");
+
             // outfile names for storing copy of table, and processed IDs
             $this->initOutfileNames();
 
@@ -1868,7 +1930,7 @@ class OnlineSchemaChangeRefactor
             $this->logger->notice("$this->tablename has been moved to $this->renametable - Don't forget to remove it.");
             $this->cleanup();
         } catch (Exception $e) {
-            $this->cleanup();
+            //$this->cleanup();
 
             throw $e;
         }
