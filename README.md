@@ -23,7 +23,7 @@ The package then locks the tables, replays any new changes one last time before 
 
 Download the phar archive directly
 
-    curl -fsSLo online-schema-change https://github.com/mrjgreen/mysql-online-schema-change/blob/master/build/online-schema-change.phar
+    curl -fsSLo online-schema-change https://github.com/mrjgreen/mysql-online-schema-change/raw/master/build/online-schema-change.phar
     chmod a+x online-schema-change
 
 
