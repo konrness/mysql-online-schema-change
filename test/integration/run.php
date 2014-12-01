@@ -29,6 +29,8 @@ $onlineSchemaChange = new \OnlineSchemaChangeRefactor(
     OSC_FLAGS_ACCEPT_VERSION
 );
 
+$onlineSchemaChange->forceCleanup();
+
 $onlineSchemaChange->execute();
 
 

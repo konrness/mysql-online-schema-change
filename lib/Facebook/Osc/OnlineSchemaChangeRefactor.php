@@ -478,7 +478,7 @@ class OnlineSchemaChangeRefactor
         }
         catch(\PDOException $e)
         {
-            if(false !== strpos($e->getMessage(), 'doesn\'t exists'))
+            if(false !== strpos($e->getMessage(), 'doesn\'t exist'))
             {
                 return false;
             }
@@ -1216,6 +1216,8 @@ class OnlineSchemaChangeRefactor
 
         $this->logger->notice("Counted: $fullCount rows in table $this->qtablenameq. Batch size: $this->batchsizeLoad. Appx outfile count: $runs");
 
+        $startTime = time();
+
         do {
 
             $outfile_suffix++; // start with 1
@@ -1246,13 +1248,35 @@ class OnlineSchemaChangeRefactor
                 $this->rangeStartVarsArray);
             $whereclause = sprintf(" WHERE %s ", $range);
 
-            $percent = ($outfile_suffix / $runs) * 100;
+            $this->logger->notice("Written $rowCount rows to $fileString");
 
-            $this->logger->notice("Written $rowCount rows to $fileString ($outfile_suffix of $runs) $percent%");
+            $this->calculateRuntimeStats($outfile_suffix, $runs, $startTime);
 
         } while ($rowCount >= $this->batchsizeLoad);
 
         $this->executeSql('Committing after generating outfiles', 'COMMIT');
+    }
+
+    private function calculateRuntimeStats($currentRun, $totalRuns, $startTime)
+    {
+        $percent = ($currentRun / $totalRuns) * 100;
+
+        $averageSecondsPerRun = (time() - $startTime) / $currentRun;
+
+        $secondsRemaining = ($totalRuns - $currentRun) * $averageSecondsPerRun;
+
+        $this->logger->notice("File $currentRun of $totalRuns ($percent%)");
+
+        $this->logger->notice(sprintf("Time per run: %s. Time remaining: %s",
+            $this->formatSeconds($averageSecondsPerRun),
+            $this->formatSeconds($secondsRemaining)));
+    }
+
+    private function formatSeconds($seconds)
+    {
+        $dtStart = new DateTime("@0");
+        $dtSeconds = new DateTime("@$seconds");
+        return $dtStart->diff($dtSeconds)->format('%a days, %h hours, %i minutes and %s seconds');
     }
 
     // gets @@datadir into $this->dataDir and returns it as well
@@ -1789,12 +1813,7 @@ class OnlineSchemaChangeRefactor
             }
         }
 
-        // closing connection should drop temp tables
-        // don't bother checking return status as this is last step anyway.
-        if ($this->conn) {
-            $this->releaseOscLock($this->conn); // noop if lock not held
-            $this->conn = null;
-        }
+        $this->releaseOscLock($this->conn); // noop if lock not held
 
     }
 
