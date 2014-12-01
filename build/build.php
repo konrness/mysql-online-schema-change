@@ -142,6 +142,6 @@ __HALT_COMPILER();";
 }
 $name = 'online-schema-change';
 $root = __DIR__ . '/../';
-$compile = new Compiler($root . 'bin/' . $name, array($root . 'bin', $root . 'src', $root . 'vendor'));
+$compile = new Compiler($root . 'bin/' . $name, array($root . 'bin', $root . 'src', $root . 'vendor', $root . 'lib'));
 $compile->compile($name . '.phar');
 chmod(__DIR__ . '/'.$name.'.phar', 0777);
