@@ -54,7 +54,7 @@ class AlterTableCommand extends Command
             ->addArgument('database', InputArgument::REQUIRED, 'The database')
             ->addArgument('table', InputArgument::REQUIRED, 'The table')
             ->addArgument('alter', InputArgument::REQUIRED, 'The alter statement')
-            ->addOption('host', null, InputOption::VALUE_REQUIRED, 'The hostname to use', 'localhost')
+            ->addOption('socket', null, InputOption::VALUE_REQUIRED, 'The socket to connect with')
             ->addOption('user', null, InputOption::VALUE_REQUIRED, 'The user to authenticate with', self::DEFAULT_USER)
             ->addOption('password', null, InputOption::VALUE_REQUIRED, 'The password to authenticate with')
         ;
@@ -76,9 +76,16 @@ class AlterTableCommand extends Command
 
         $logger = new Log(STDOUT, $verbosity[$output->getVerbosity()]);
 
-        $host = $input->getOption('host');
+        if($socket = $input->getOption('socket'))
+        {
+            $socket = "unix_socket=$socket;";
+        }
+        else
+        {
+            $socket = "host=localhost;";
+        }
 
-        $pdo = new \PDO("mysql:host=$host;", $input->getOption('user'), $input->getOption('password'), array(
+        $pdo = new \PDO("mysql:$socket;", $input->getOption('user'), $input->getOption('password'), array(
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION
         ));
 
