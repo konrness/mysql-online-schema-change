@@ -78,11 +78,11 @@ class AlterTableCommand extends Command
 
         if($socket = $input->getOption('socket'))
         {
-            $socket = "unix_socket=$socket;";
+            $socket = "unix_socket=$socket";
         }
         else
         {
-            $socket = "host=localhost;";
+            $socket = "host=localhost";
         }
 
         $pdo = new \PDO("mysql:$socket;", $input->getOption('user'), $input->getOption('password'), array(
