@@ -1,46 +1,11 @@
 <?php namespace Osc\Command;
+use Osc\Logger;
 use Psr\Log\AbstractLogger;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-
-class Log extends AbstractLogger
-{
-    protected $levelMapping = array(
-        \Psr\Log\LogLevel::DEBUG        => LOG_DEBUG,
-        \Psr\Log\LogLevel::INFO         => LOG_INFO,
-        \Psr\Log\LogLevel::NOTICE       => LOG_NOTICE,
-        \Psr\Log\LogLevel::WARNING      => LOG_WARNING,
-        \Psr\Log\LogLevel::ERROR        => LOG_ERR,
-        \Psr\Log\LogLevel::CRITICAL     => LOG_CRIT,
-        \Psr\Log\LogLevel::ALERT        => LOG_ALERT,
-        \Psr\Log\LogLevel::EMERGENCY    => LOG_EMERG,
-    );
-
-    protected $file;
-
-    protected $verbosity;
-
-    public function __construct($fileHandle, $verbosity = 0)
-    {
-        $this->file = is_array($fileHandle) ? $fileHandle : array($fileHandle);
-
-        $this->verbosity = $this->levelMapping[$verbosity];
-    }
-
-    public function log($level, $message, array $context = array())
-    {
-        if($this->levelMapping[$level] <= $this->verbosity)
-        {
-            foreach($this->file as $handle)
-            {
-                fwrite($handle, "$level: $message\n");
-            }
-        }
-    }
-}
 
 class AlterTableCommand extends Command
 {
@@ -54,9 +19,11 @@ class AlterTableCommand extends Command
             ->addArgument('database', InputArgument::REQUIRED, 'The database')
             ->addArgument('table', InputArgument::REQUIRED, 'The table')
             ->addArgument('alter', InputArgument::REQUIRED, 'The alter statement')
-            ->addOption('socket', null, InputOption::VALUE_REQUIRED, 'The socket to connect with')
-            ->addOption('user', null, InputOption::VALUE_REQUIRED, 'The user to authenticate with', self::DEFAULT_USER)
-            ->addOption('password', null, InputOption::VALUE_REQUIRED, 'The password to authenticate with')
+            ->addOption('socket', 's', InputOption::VALUE_REQUIRED, 'The socket to connect with')
+            ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'The user to authenticate with', self::DEFAULT_USER)
+            ->addOption('password', 'p', InputOption::VALUE_REQUIRED, 'The password to authenticate with')
+            ->addOption('logfile', null, InputOption::VALUE_REQUIRED, 'A filename to log to. Will write output to stdout unless specified')
+            ->addOption('stdout', null, InputOption::VALUE_NONE, 'Log to stdout as well as to file. Only required if --logfile is specified')
         ;
     }
     /**
@@ -71,10 +38,29 @@ class AlterTableCommand extends Command
             OutputInterface::VERBOSITY_VERY_VERBOSE => \Psr\Log\LogLevel::DEBUG,
             OutputInterface::VERBOSITY_VERBOSE      => \Psr\Log\LogLevel::INFO,
             OutputInterface::VERBOSITY_DEBUG        => \Psr\Log\LogLevel::DEBUG,
-            OutputInterface::VERBOSITY_QUIET        => \Psr\Log\LogLevel::EMERGENCY,
+            OutputInterface::VERBOSITY_QUIET        => -1,
         );
 
-        $logger = new Log(STDOUT, $verbosity[$output->getVerbosity()]);
+        $files = array();
+
+        if($logfile = $input->getOption('logfile'))
+        {
+            if(!$logHandle = fopen($logfile, 'w'))
+            {
+                $dir = dirname($logfile);
+
+                throw new \RuntimeException("Log file '$logfile' could not be opened. Please check the folder '$dir' exists and has the correct permissions.");
+            }
+
+            $files[] = $logfile;
+        }
+
+        if(!$logfile || $input->getOption('stdout'))
+        {
+            $files[] = STDOUT;
+        }
+
+        $logger = new Logger($files, $verbosity[$output->getVerbosity()]);
 
         if($socket = $input->getOption('socket'))
         {

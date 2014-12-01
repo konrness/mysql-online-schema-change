@@ -1210,7 +1210,14 @@ class OnlineSchemaChangeRefactor
 
         $outfile_suffix = 0;
 
+        $fullCount = $this->executeSql('Counting rows in table', "SELECT COUNT(*) FROM $this->qtablenameq")->fetchColumn();
+
+        $runs = ceil($fullCount / $this->batchsizeLoad);
+
+        $this->logger->notice("Counted: $fullCount rows in table $this->qtablenameq. Batch size: $this->batchsizeLoad. Appx outfile count: $runs");
+
         do {
+
             $outfile_suffix++; // start with 1
 
             $selectinto = "select %s, %s " .
@@ -1221,11 +1228,15 @@ class OnlineSchemaChangeRefactor
             // this gets pk column values into range end variables
             $assign = $this->assignRangeEndVariables($this->pkcolumnarray,
                 $this->rangeEndVarsArray);
+
             $selectinto = sprintf($selectinto, $assign, $this->nonpkcolumns,
                 $this->qtablenameq, $whereclause,
                 $this->pkcolumns, $this->batchsizeLoad,
                 $this->outfileTable, $outfile_suffix);
-            $stmt = $this->executeSql('Selecting table into outfile', $selectinto);
+
+            $fileString = sprintf('%s.%s', $this->outfileTable, $outfile_suffix);
+
+            $stmt = $this->executeSql('Selecting table into outfile: ' . $fileString, $selectinto);
             $this->outfileSuffixStart = 1;
             $this->outfileSuffixEnd = $outfile_suffix;
             $rowCount = $stmt->rowCount();
@@ -1234,6 +1245,11 @@ class OnlineSchemaChangeRefactor
             $range = $this->getRangeStartCondition($this->pkcolumnarray,
                 $this->rangeStartVarsArray);
             $whereclause = sprintf(" WHERE %s ", $range);
+
+            $percent = ($outfile_suffix / $runs) * 100;
+
+            $this->logger->notice("Written $rowCount rows to $fileString ($outfile_suffix of $runs) $percent%");
+
         } while ($rowCount >= $this->batchsizeLoad);
 
         $this->executeSql('Committing after generating outfiles', 'COMMIT');
