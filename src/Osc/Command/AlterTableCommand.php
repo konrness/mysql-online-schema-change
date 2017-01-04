@@ -18,7 +18,7 @@ class AlterTableCommand extends Command
             ->setDescription('Runs an online alter table')
             ->addArgument('database', InputArgument::REQUIRED, 'The database')
             ->addArgument('table', InputArgument::REQUIRED, 'The table')
-            ->addArgument('alter', InputArgument::REQUIRED, 'The alter statement')
+            ->addArgument('alter', InputArgument::OPTIONAL, 'The alter statement')
             ->addOption('socket', 's', InputOption::VALUE_REQUIRED, 'The socket to connect with')
             ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'The user to authenticate with', self::DEFAULT_USER)
             ->addOption('password', 'p', InputOption::VALUE_REQUIRED, 'The password to authenticate with')
@@ -60,6 +60,17 @@ class AlterTableCommand extends Command
             $files[] = STDOUT;
         }
 
+        $alter = '';
+        if ($input->getArgument('alter')) {
+            $alter = $input->getArgument('alter');
+        } else if (0 === ftell(STDIN)) {
+            while (!feof(STDIN)) {
+                $alter .= fread(STDIN, 1024);
+            }
+        } else {
+            throw new \RuntimeException("Please provide an alter argument, or pipe alter command to STDIN.");
+        }
+
         $logger = new Logger($files, $verbosity[$output->getVerbosity()]);
 
         if($socket = $input->getOption('socket'))
@@ -80,7 +91,7 @@ class AlterTableCommand extends Command
             $logger,
             $input->getArgument('database'),
             $input->getArgument('table'),
-            $input->getArgument('alter'),
+            $alter,
             null,
             OSC_FLAGS_ACCEPT_VERSION
         );
