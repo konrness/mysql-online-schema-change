@@ -623,6 +623,7 @@ class OnlineSchemaChangeRefactor
         $this->pkcolumnarray = array();
         $this->nonpkarray = array();
         $this->nonpkcolumns = '';
+        $this->nonpkcolumns_for_outfile = '';
 
         // get list of columns in new table
         $query = "select column_name " .
@@ -637,7 +638,7 @@ class OnlineSchemaChangeRefactor
             $newcolumns[] = $row['column_name'];
         }
 
-        $query = "select column_name, column_key, extra " .
+        $query = "select column_name, column_key, extra, data_type " .
             "from information_schema.columns " .
             "where table_name ='%s' and table_schema='%s'";
         $query = sprintf($query, $this->tablename, $this->dbname);
@@ -664,6 +665,14 @@ class OnlineSchemaChangeRefactor
             if ($row['column_key'] != 'PRI') {
                 $this->nonpkarray[] = $column_name;
                 $this->nonpkcolumns .= $comma . $column_name;
+
+                if ($row['data_type'] == "bit") {
+                    // transform binary bit to integer
+                    $this->nonpkcolumns_for_outfile .= $comma . "CAST($column_name AS UNSIGNED) AS $column_name";
+                } else {
+                    $this->nonpkcolumns_for_outfile .= $comma . $column_name;
+                }
+
                 $comma = ',';
             }
         }
@@ -1230,7 +1239,7 @@ class OnlineSchemaChangeRefactor
                 $this->rangeEndVarsArray);
 
             $selectinto = sprintf($selectinto,
-                $assign, $this->nonpkcolumns, $this->qtablenameq, $whereclause,
+                $assign, $this->nonpkcolumns_for_outfile, $this->qtablenameq, $whereclause,
                 $this->pkcolumns, $this->batchsizeLoad, $this->outfileTable, $outfile_suffix);
 
             $fileString = sprintf('%s.%d', $this->outfileTable, $outfile_suffix);
@@ -1461,15 +1470,16 @@ class OnlineSchemaChangeRefactor
 
             $filename = sprintf('%s.%d', $this->outfileTable, $suffixStart);
 
+            // @todo Update to use the character set from the table instead of hardcoded latin1
             if ($this->flags & OSC_FLAGS_USE_NEW_PK) {
-                $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s(%s)",
+                $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s CHARACTER SET latin1 (%s)",
                     $this->outfileTable,
                     $suffixStart,
                     $this->ignoredups,
                     $this->newtablename,
                     $this->columns);
             } else {
-                $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s(%s, %s)",
+                $loadsql = sprintf("LOAD DATA INFILE '%s.%d' %s INTO TABLE %s CHARACTER SET latin1 (%s, %s)",
                     $this->outfileTable,
                     $suffixStart,
                     $this->ignoredups,
