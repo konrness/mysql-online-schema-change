@@ -32,6 +32,9 @@ Call directly, eg.
     // add -v or -vv for additional output
     ./online-schema-change database table "alter table statement" --user jsmith --password pw0rd
 
+Instead of passing the alter statement as a input parameter, you can also pipe it in:
+
+    ./online-schema-change database table < alter.sql
 
 This tool uses a modified version of the facebook OSC script http://bazaar.launchpad.net/~mysqlatfacebook/mysqlatfacebook/tools/annotate/head:/osc/OnlineSchemaChange.php
 
